@@ -14,8 +14,9 @@ What it does, every time it's run:
 2. Any event whose last day is before today is cut out of its month
    section and added as a new line at the TOP of the "Just Missed Out!"
    list at the bottom (most recently completed event first).
-3. Any month header left with zero events under it is removed.
-4. The footer's "Last updated" line is stamped with today's date,
+3. Any archive entry more than 2 weeks old is removed entirely.
+4. Any month header left with zero events under it is removed.
+5. The footer's "Last updated" line is stamped with today's date,
    keeping whatever capitalization/punctuation you're already using.
 
 Run against your published HTML file (see the GitHub Actions workflow
@@ -24,7 +25,7 @@ for how this runs automatically every day).
 
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 HTML_PATH = "index.html"  # change if your file has a different name
 
@@ -98,8 +99,8 @@ def main():
         venue = strip_tags(venue_match.group(1)) if venue_match else ""
         date_str = format_range(start, end)
 
-        line = f'      <li>{name} \u2014 {venue} <span>\u00b7 {date_str}</span></li>'
-        new_archive_lines.append((start, line))
+        line = f'      <li data-date="{end.isoformat()}">{name} \u2014 {venue} <span>\u00b7 {date_str}</span></li>'
+        new_archive_lines.append((end, line))
         return ""  # delete the whole block
 
     html = EVENT_BLOCK_RE.sub(maybe_strip, html)
@@ -128,7 +129,21 @@ def main():
             count=1,
         )
 
-    # --- Pass 4: stamp today's date in the footer ---------------------
+    # --- Pass 4: drop archive entries older than 2 weeks --------------
+    ARCHIVE_ITEM_RE = re.compile(
+        r'\s*<li data-date="(\d{4}-\d{2}-\d{2})">.*?</li>\n?'
+    )
+    cutoff = today - timedelta(days=14)
+
+    def maybe_strip_old_archive_item(m):
+        item_date = parse_date(m.group(1))
+        if item_date < cutoff:
+            return ""  # older than 2 weeks -- drop it
+        return m.group(0)
+
+    html = ARCHIVE_ITEM_RE.sub(maybe_strip_old_archive_item, html)
+
+    # --- Pass 5: stamp today's date in the footer ---------------------
     html = re.sub(
         r"(Last [Uu]pdated:?\s*)[A-Za-z]+ \d{1,2}, \d{4}",
         lambda m: m.group(1) + today.strftime("%B %-d, %Y"),
@@ -140,7 +155,8 @@ def main():
         f.write(html)
 
     print(f"Pruned {len(new_archive_lines)} past event(s). "
-          f"Footer stamped {today.isoformat()}.")
+          f"Footer stamped {today.isoformat()}. (Old archive entries "
+          f"beyond 2 weeks were also cleared if any existed.)")
 
 
 if __name__ == "__main__":
